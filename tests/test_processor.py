@@ -53,6 +53,14 @@ def test_normalize_basic_fields():
     assert f["description"] == "A buffer overflow in libssl."
 
 
+def test_normalize_severity_as_plain_string():
+    """Real AWS API sometimes returns severity as a plain string, not a dict."""
+    raw = [make_finding(severity="HIGH")]
+    raw[0]["severity"] = "HIGH"  # plain string instead of {"label": "HIGH"}
+    result = normalize_findings(raw)
+    assert result[0]["severity"] == "HIGH"
+
+
 def test_normalize_informational_becomes_untriaged():
     raw = [make_finding(severity="INFORMATIONAL")]
     result = normalize_findings(raw)

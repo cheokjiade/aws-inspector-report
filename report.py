@@ -113,7 +113,11 @@ def normalize_findings(raw_findings: list) -> list:
     now = datetime.now(timezone.utc)
     results = []
     for f in raw_findings:
-        severity_label = f.get("severity", {}).get("label", "")
+        severity_raw = f.get("severity", {})
+        if isinstance(severity_raw, dict):
+            severity_label = severity_raw.get("label", "")
+        else:
+            severity_label = str(severity_raw) if severity_raw else ""
         if severity_label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
             severity_label = "UNTRIAGED"
 
