@@ -186,7 +186,7 @@ def build_repo_findings(findings: list) -> dict:
         grouped.setdefault(repo, []).append(f)
     for repo in grouped:
         grouped[repo].sort(
-            key=lambda f: (severity_rank.get(f["severity"], 99), f["first_observed"])
+            key=lambda item: (severity_rank.get(item["severity"], 99), item["first_observed"])
         )
     return grouped
 
