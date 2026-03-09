@@ -69,14 +69,27 @@ def fetch_findings(args):
             {"comparison": "EQUALS", "value": s} for s in args.severity
         ]
 
-    if args.repo:
+    # Pass repo filter only for single repo (API uses AND for multiple values).
+    # For multiple repos, filter client-side after fetching.
+    if len(args.repo) == 1:
         filter_criteria["ecrImageRepositoryName"] = [
-            {"comparison": "EQUALS", "value": r} for r in args.repo
+            {"comparison": "EQUALS", "value": args.repo[0]}
         ]
 
     findings = []
     for page in paginator.paginate(filterCriteria=filter_criteria):
         findings.extend(page.get("findings", []))
+
+    # Client-side repo filter when multiple repos are specified
+    if len(args.repo) > 1:
+        repo_set = set(args.repo)
+        findings = [
+            f for f in findings
+            if any(
+                resource.get("details", {}).get("awsEcrContainerImage", {}).get("repositoryName") in repo_set
+                for resource in f.get("resources", [])
+            )
+        ]
 
     return findings
 

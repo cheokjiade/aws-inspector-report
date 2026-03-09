@@ -79,6 +79,59 @@ def test_fetch_findings_builds_repo_filter(mock_client_factory):
 
 
 @patch("report.boto3.client")
+def test_fetch_findings_multi_repo_filters_client_side(mock_client_factory):
+    mock_client = MagicMock()
+    mock_client_factory.return_value = mock_client
+    paginator = MagicMock()
+    mock_client.get_paginator.return_value = paginator
+
+    finding_app_a = {
+        **SAMPLE_FINDING,
+        "findingArn": "arn:1",
+        "resources": [{"type": "AWS_ECR_CONTAINER_IMAGE", "details": {"awsEcrContainerImage": {"repositoryName": "app-a"}}}]
+    }
+    finding_app_b = {
+        **SAMPLE_FINDING,
+        "findingArn": "arn:2",
+        "resources": [{"type": "AWS_ECR_CONTAINER_IMAGE", "details": {"awsEcrContainerImage": {"repositoryName": "app-b"}}}]
+    }
+    finding_other = {
+        **SAMPLE_FINDING,
+        "findingArn": "arn:3",
+        "resources": [{"type": "AWS_ECR_CONTAINER_IMAGE", "details": {"awsEcrContainerImage": {"repositoryName": "other"}}}]
+    }
+    paginator.paginate.return_value = [{"findings": [finding_app_a, finding_app_b, finding_other]}]
+
+    args = parse_args(["--repo", "app-a", "--repo", "app-b"])
+    result = fetch_findings(args)
+
+    assert len(result) == 2
+    arns = {f["findingArn"] for f in result}
+    assert "arn:1" in arns
+    assert "arn:2" in arns
+    assert "arn:3" not in arns
+
+    # Verify no repo filter was sent to the API (client-side filtering used)
+    call_kwargs = paginator.paginate.call_args[1]
+    assert "ecrImageRepositoryName" not in call_kwargs["filterCriteria"]
+
+
+@patch("report.boto3.client")
+def test_fetch_findings_no_severity_filter_when_empty(mock_client_factory):
+    mock_client = MagicMock()
+    mock_client_factory.return_value = mock_client
+    paginator = MagicMock()
+    mock_client.get_paginator.return_value = paginator
+    paginator.paginate.return_value = [{"findings": []}]
+
+    args = parse_args([])
+    fetch_findings(args)
+
+    call_kwargs = paginator.paginate.call_args[1]
+    assert "severity" not in call_kwargs["filterCriteria"]
+
+
+@patch("report.boto3.client")
 def test_fetch_findings_paginates(mock_client_factory):
     mock_client = MagicMock()
     mock_client_factory.return_value = mock_client
