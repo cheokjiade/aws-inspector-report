@@ -149,6 +149,46 @@ def normalize_findings(raw_findings: list) -> list:
     return results
 
 
+def build_severity_summary(findings: list) -> dict:
+    """Build severity-by-age-bucket summary counts."""
+    summary = {
+        sev: {"total": 0, **{bucket: 0 for bucket in AGE_BUCKETS}}
+        for sev in SEVERITY_ORDER
+    }
+    for f in findings:
+        sev = f["severity"]
+        summary[sev]["total"] += 1
+        summary[sev][f["age_bucket"]] += 1
+    return summary
+
+
+def build_repo_summary(findings: list) -> dict:
+    """Build per-repository severity counts."""
+    summary = {}
+    for f in findings:
+        repo = f["repo"]
+        if repo not in summary:
+            summary[repo] = {sev: 0 for sev in SEVERITY_ORDER}
+            summary[repo]["total"] = 0
+        summary[repo][f["severity"]] += 1
+        summary[repo]["total"] += 1
+    return summary
+
+
+def build_repo_findings(findings: list) -> dict:
+    """Group findings by repository, sorted by severity then first observed date."""
+    severity_rank = {sev: i for i, sev in enumerate(SEVERITY_ORDER)}
+    grouped = {}
+    for f in findings:
+        repo = f["repo"]
+        grouped.setdefault(repo, []).append(f)
+    for repo in grouped:
+        grouped[repo].sort(
+            key=lambda f: (severity_rank.get(f["severity"], 99), f["first_observed"])
+        )
+    return grouped
+
+
 def main():
     pass
 
