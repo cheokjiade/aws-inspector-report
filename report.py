@@ -138,6 +138,8 @@ def normalize_findings(raw_findings: list) -> list:
             if details.get("repositoryName"):
                 repo = details["repositoryName"]
                 break
+        if not repo:
+            repo = "(unknown)"
 
         results.append({
             "repo": repo,
@@ -258,8 +260,16 @@ def write_report(
     ws2.freeze_panes = "A2"
 
     # --- Sheet 3+: Per-repository findings ---
+    used_sheet_names = set()
     for repo in sorted(repo_findings.keys()):
-        sheet_name = repo[:31]
+        base = repo[:31]
+        sheet_name = base
+        counter = 2
+        while sheet_name in used_sheet_names:
+            suffix = f"_{counter}"
+            sheet_name = base[:31 - len(suffix)] + suffix
+            counter += 1
+        used_sheet_names.add(sheet_name)
         ws = wb.create_sheet(sheet_name)
         ws.append(["S/N", "Description", "Remediation", "Severity", "First Discovered"])
         for col in range(1, 6):

@@ -104,3 +104,45 @@ def test_sheet_name_truncated_to_31_chars(tmp_path):
     wb = openpyxl.load_workbook(output)
     for sheet in wb.sheetnames[2:]:
         assert len(sheet) <= 31
+
+
+def test_empty_repo_name_uses_unknown(tmp_path):
+    findings = [{
+        "repo": "(unknown)",
+        "severity": "HIGH",
+        "description": "A vulnerability.",
+        "remediation": "",
+        "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
+        "age_days": 10,
+        "age_bucket": "< 30 days",
+    }]
+    output = str(tmp_path / "unknown_repo.xlsx")
+    write_report(
+        output,
+        build_severity_summary(findings),
+        build_repo_summary(findings),
+        build_repo_findings(findings),
+    )
+    wb = openpyxl.load_workbook(output)
+    assert "(unknown)" in wb.sheetnames
+
+
+def test_duplicate_truncated_sheet_names_no_crash(tmp_path):
+    findings = [
+        make_normalized("HIGH", "a" * 32 + "X"),
+        make_normalized("HIGH", "a" * 32 + "Y"),
+    ]
+    output = str(tmp_path / "dup_names.xlsx")
+    write_report(
+        output,
+        build_severity_summary(findings),
+        build_repo_summary(findings),
+        build_repo_findings(findings),
+    )
+    wb = openpyxl.load_workbook(output)
+    # Should have 2 distinct per-repo sheets, both <= 31 chars
+    repo_sheets = wb.sheetnames[2:]
+    assert len(repo_sheets) == 2
+    assert len(set(repo_sheets)) == 2  # no duplicates
+    for s in repo_sheets:
+        assert len(s) <= 31

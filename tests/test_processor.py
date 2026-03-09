@@ -82,3 +82,16 @@ def test_normalize_age_over_90():
     raw = [make_finding(days_ago=100)]
     result = normalize_findings(raw)
     assert result[0]["age_bucket"] == "> 90 days"
+
+
+def test_normalize_missing_repo_becomes_unknown():
+    raw = [{
+        "title": "CVE-2023-1234",
+        "description": "A vulnerability.",
+        "severity": {"label": "HIGH"},
+        "firstObservedAt": (datetime.now(timezone.utc) - timedelta(days=5)).isoformat(),
+        "remediation": {},
+        "resources": [],
+    }]
+    result = normalize_findings(raw)
+    assert result[0]["repo"] == "(unknown)"
