@@ -94,6 +94,61 @@ def fetch_findings(args):
     return findings
 
 
+def age_bucket(days: int) -> str:
+    """Return the age bucket label for a given number of days."""
+    if days < 30:
+        return "< 30 days"
+    elif days <= 60:
+        return "30-60 days"
+    elif days <= 90:
+        return "60-90 days"
+    else:
+        return "> 90 days"
+
+
+def normalize_findings(raw_findings: list) -> list:
+    """Normalize raw Inspector findings into a flat list of dicts."""
+    now = datetime.now(timezone.utc)
+    results = []
+    for f in raw_findings:
+        severity_label = f.get("severity", {}).get("label", "")
+        if severity_label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+            severity_label = "UNTRIAGED"
+
+        first_observed_str = f.get("firstObservedAt", "")
+        try:
+            first_observed = datetime.fromisoformat(
+                first_observed_str.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            first_observed = now
+
+        days_old = (now - first_observed).days
+        remediation = (
+            f.get("remediation", {})
+             .get("recommendation", {})
+             .get("text", "")
+        ) or ""
+
+        repo = ""
+        for resource in f.get("resources", []):
+            details = resource.get("details", {}).get("awsEcrContainerImage", {})
+            if details.get("repositoryName"):
+                repo = details["repositoryName"]
+                break
+
+        results.append({
+            "repo": repo,
+            "severity": severity_label,
+            "description": f.get("description", ""),
+            "remediation": remediation,
+            "first_observed": first_observed,
+            "age_days": days_old,
+            "age_bucket": age_bucket(days_old),
+        })
+    return results
+
+
 def main():
     pass
 
