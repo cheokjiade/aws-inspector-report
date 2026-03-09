@@ -6,6 +6,8 @@ import sys
 from datetime import datetime, timezone
 
 import boto3
+import openpyxl
+from openpyxl.styles import Font
 
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNTRIAGED"]
@@ -187,6 +189,92 @@ def build_repo_findings(findings: list) -> dict:
             key=lambda f: (severity_rank.get(f["severity"], 99), f["first_observed"])
         )
     return grouped
+
+
+def _bold(ws, row, col):
+    ws.cell(row, col).font = Font(bold=True)
+
+
+def write_report(
+    output_path: str,
+    severity_summary: dict,
+    repo_summary: dict,
+    repo_findings: dict,
+):
+    """Write all report data to an Excel workbook."""
+    wb = openpyxl.Workbook()
+
+    # --- Sheet 1: Severity Summary ---
+    ws1 = wb.active
+    ws1.title = "Severity Summary"
+    headers = ["Severity Level", "Total"] + AGE_BUCKETS
+    ws1.append(headers)
+    for col in range(1, len(headers) + 1):
+        _bold(ws1, 1, col)
+
+    severity_display = {
+        "CRITICAL": "Critical", "HIGH": "High", "MEDIUM": "Medium",
+        "LOW": "Low", "UNTRIAGED": "Untriaged"
+    }
+    totals = {bucket: 0 for bucket in ["total"] + AGE_BUCKETS}
+    for sev in SEVERITY_ORDER:
+        data = severity_summary[sev]
+        row = [severity_display[sev], data["total"]] + [data[b] for b in AGE_BUCKETS]
+        ws1.append(row)
+        totals["total"] += data["total"]
+        for b in AGE_BUCKETS:
+            totals[b] += data[b]
+
+    total_row = ["Total", totals["total"]] + [totals[b] for b in AGE_BUCKETS]
+    ws1.append(total_row)
+    for col in range(1, len(headers) + 1):
+        _bold(ws1, ws1.max_row, col)
+
+    ws1.freeze_panes = "A2"
+
+    # --- Sheet 2: Repository Summary ---
+    ws2 = wb.create_sheet("Repository Summary")
+    sev_labels = ["Critical", "High", "Medium", "Low", "Untriaged"]
+    sev_keys = SEVERITY_ORDER
+    headers2 = ["Amazon ECR Container"] + sev_labels + ["Total"]
+    ws2.append(headers2)
+    for col in range(1, len(headers2) + 1):
+        _bold(ws2, 1, col)
+
+    repo_totals = {key: 0 for key in sev_keys + ["total"]}
+    for repo in sorted(repo_summary.keys()):
+        data = repo_summary[repo]
+        row = [repo] + [data[k] for k in sev_keys] + [data["total"]]
+        ws2.append(row)
+        for k in sev_keys:
+            repo_totals[k] += data[k]
+        repo_totals["total"] += data["total"]
+
+    total_row2 = ["Total"] + [repo_totals[k] for k in sev_keys] + [repo_totals["total"]]
+    ws2.append(total_row2)
+    for col in range(1, len(headers2) + 1):
+        _bold(ws2, ws2.max_row, col)
+
+    ws2.freeze_panes = "A2"
+
+    # --- Sheet 3+: Per-repository findings ---
+    for repo in sorted(repo_findings.keys()):
+        sheet_name = repo[:31]
+        ws = wb.create_sheet(sheet_name)
+        ws.append(["S/N", "Description", "Remediation", "Severity", "First Discovered"])
+        for col in range(1, 6):
+            _bold(ws, 1, col)
+        for i, f in enumerate(repo_findings[repo], start=1):
+            ws.append([
+                i,
+                f["description"],
+                f["remediation"],
+                f["severity"].capitalize(),
+                f["first_observed"].strftime("%Y-%m-%d"),
+            ])
+        ws.freeze_panes = "A2"
+
+    wb.save(output_path)
 
 
 def main():
