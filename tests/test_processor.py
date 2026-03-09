@@ -82,34 +82,42 @@ def test_normalize_missing_severity_becomes_untriaged():
     assert result[0]["severity"] == "UNTRIAGED"
 
 
-def test_normalize_remediation_text():
-    raw = [make_finding(remediation_text="Update libssl to 3.0.9")]
+UPGRADE_MSG = "Upgrade your installed software packages to the proposed fixed in version and release."
+
+
+def test_normalize_remediation_fixed_version_uses_upgrade_message():
+    raw = [make_finding()]
+    raw[0]["packageVulnerabilityDetails"] = {
+        "vulnerablePackages": [{"fixedInVersion": "3.0.9", "remediation": "Update to 3.0.9"}]
+    }
     result = normalize_findings(raw)
-    assert result[0]["remediation"] == "Update libssl to 3.0.9"
+    assert result[0]["remediation"].startswith(UPGRADE_MSG)
+    assert "Update to 3.0.9" in result[0]["remediation"]
+
+
+def test_normalize_remediation_fixed_version_deduplicates_package_fixes():
+    raw = [make_finding()]
+    raw[0]["packageVulnerabilityDetails"] = {
+        "vulnerablePackages": [
+            {"fixedInVersion": "3.0.9", "remediation": "Update to 3.0.9"},
+            {"fixedInVersion": "3.0.9", "remediation": "Update to 3.0.9"},
+        ]
+    }
+    result = normalize_findings(raw)
+    assert result[0]["remediation"].count("Update to 3.0.9") == 1
+
+
+def test_normalize_remediation_no_fixed_version_uses_recommendation_text():
+    raw = [make_finding(remediation_text="Apply the vendor patch manually.")]
+    result = normalize_findings(raw)
+    assert result[0]["remediation"] == "Apply the vendor patch manually."
+    assert UPGRADE_MSG not in result[0]["remediation"]
 
 
 def test_normalize_remediation_none_provided_excluded():
     raw = [make_finding(remediation_text="None provided")]
     result = normalize_findings(raw)
     assert "None provided" not in result[0]["remediation"]
-
-
-def test_normalize_remediation_package_fix():
-    raw = [make_finding()]
-    raw[0]["packageVulnerabilityDetails"] = {
-        "vulnerablePackages": [{"remediation": "Update to 3.0.9"}]
-    }
-    result = normalize_findings(raw)
-    assert "Update to 3.0.9" in result[0]["remediation"]
-
-
-def test_normalize_remediation_deduplicates_package_fixes():
-    raw = [make_finding(remediation_text="Update to 3.0.9")]
-    raw[0]["packageVulnerabilityDetails"] = {
-        "vulnerablePackages": [{"remediation": "Update to 3.0.9"}]
-    }
-    result = normalize_findings(raw)
-    assert result[0]["remediation"].count("Update to 3.0.9") == 1
 
 
 def test_normalize_empty_remediation():

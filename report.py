@@ -135,18 +135,21 @@ def normalize_findings(raw_findings: list) -> list:
             first_observed = now
 
         days_old = (now - first_observed).days
-        recommendation = f.get("remediation", {}).get("recommendation", {})
+        vulnerable_packages = f.get("packageVulnerabilityDetails", {}).get("vulnerablePackages", [])
+        has_fixed_version = any(pkg.get("fixedInVersion") for pkg in vulnerable_packages)
         remediation_parts = []
-        rec_text = recommendation.get("text", "") or ""
-        if rec_text and rec_text.strip().lower() != "none provided":
-            remediation_parts.append(rec_text)
-        remediation_url = recommendation.get("url", "")
-        if remediation_url:
-            remediation_parts.append(remediation_url)
-        for pkg in f.get("packageVulnerabilityDetails", {}).get("vulnerablePackages", []):
-            pkg_fix = (pkg.get("remediation", "") or "").strip()
-            if pkg_fix and pkg_fix not in remediation_parts:
-                remediation_parts.append(pkg_fix)
+        if has_fixed_version:
+            remediation_parts.append(
+                "Upgrade your installed software packages to the proposed fixed in version and release."
+            )
+            for pkg in vulnerable_packages:
+                pkg_fix = (pkg.get("remediation", "") or "").strip()
+                if pkg_fix and pkg_fix not in remediation_parts:
+                    remediation_parts.append(pkg_fix)
+        else:
+            rec_text = (f.get("remediation", {}).get("recommendation", {}).get("text", "") or "").strip()
+            if rec_text and rec_text.lower() != "none provided":
+                remediation_parts.append(rec_text)
         remediation = "\n".join(remediation_parts)
 
         repo = ""
