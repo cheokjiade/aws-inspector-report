@@ -10,7 +10,7 @@ def make_normalized(severity="HIGH", repo="my-app", age_bucket="< 30 days"):
     return {
         "repo": repo,
         "severity": severity,
-        "description": "A vulnerability.",
+        "title": "A vulnerability.",
         "remediation": "Update the package.",
         "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
         "age_days": 10,
@@ -81,7 +81,7 @@ def test_per_repo_sheet_headers(report_file):
     wb = openpyxl.load_workbook(report_file)
     ws = wb["app-a"]
     headers = [ws.cell(1, c).value for c in range(1, 6)]
-    assert headers == ["S/N", "Description", "Remediation", "Severity", "First Discovered"]
+    assert headers == ["S/N", "Title", "Remediation", "Severity", "First Discovered"]
 
 
 def test_per_repo_sheet_row_count(report_file):
@@ -110,7 +110,7 @@ def test_empty_repo_name_uses_unknown(tmp_path):
     findings = [{
         "repo": "(unknown)",
         "severity": "HIGH",
-        "description": "A vulnerability.",
+        "title": "A vulnerability.",
         "remediation": "",
         "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
         "age_days": 10,

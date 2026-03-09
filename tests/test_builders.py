@@ -7,7 +7,7 @@ def make_normalized(severity="HIGH", repo="my-app", age_bucket="< 30 days"):
     return {
         "repo": repo,
         "severity": severity,
-        "description": "A vulnerability.",
+        "title": "A vulnerability.",
         "remediation": "Update the package.",
         "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
         "age_days": 10,

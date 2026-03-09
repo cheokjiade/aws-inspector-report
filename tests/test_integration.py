@@ -12,7 +12,7 @@ def make_raw_finding(severity="HIGH", repo="my-app", days_ago=10):
     return {
         "findingArn": f"arn:aws:inspector2:us-east-1:123:finding/{repo}-{severity}",
         "title": f"CVE-2023-1234 - {repo}",
-        "description": f"Vulnerability in {repo}.",
+        "title": f"Vulnerability in {repo}.",
         "severity": {"label": severity},
         "firstObservedAt": first_observed.isoformat(),
         "status": "ACTIVE",

@@ -135,11 +135,12 @@ def normalize_findings(raw_findings: list) -> list:
             first_observed = now
 
         days_old = (now - first_observed).days
-        remediation = (
-            f.get("remediation", {})
-             .get("recommendation", {})
-             .get("text", "")
-        ) or ""
+        recommendation = f.get("remediation", {}).get("recommendation", {})
+        remediation_parts = [recommendation.get("text", "") or ""]
+        remediation_url = recommendation.get("url", "")
+        if remediation_url:
+            remediation_parts.append(remediation_url)
+        remediation = "\n".join(p for p in remediation_parts if p)
 
         repo = ""
         for resource in f.get("resources", []):
@@ -153,7 +154,7 @@ def normalize_findings(raw_findings: list) -> list:
         results.append({
             "repo": repo,
             "severity": severity_label,
-            "description": f.get("description", ""),
+            "title": f.get("title", ""),
             "remediation": remediation,
             "first_observed": first_observed,
             "age_days": days_old,
@@ -280,13 +281,13 @@ def write_report(
             counter += 1
         used_sheet_names.add(sheet_name)
         ws = wb.create_sheet(sheet_name)
-        ws.append(["S/N", "Description", "Remediation", "Severity", "First Discovered"])
+        ws.append(["S/N", "Title", "Remediation", "Severity", "First Discovered"])
         for col in range(1, 6):
             _bold(ws, 1, col)
         for i, f in enumerate(repo_findings[repo], start=1):
             ws.append([
                 i,
-                f["description"],
+                f["title"],
                 f["remediation"],
                 f["severity"].capitalize(),
                 f["first_observed"].strftime("%Y-%m-%d"),

@@ -50,7 +50,7 @@ def test_normalize_basic_fields():
     assert f["repo"] == "my-app"
     assert f["severity"] == "HIGH"
     assert f["age_bucket"] == "< 30 days"
-    assert f["description"] == "A buffer overflow in libssl."
+    assert f["title"] == "CVE-2023-1234 - libssl"
 
 
 def test_normalize_severity_as_plain_string():
