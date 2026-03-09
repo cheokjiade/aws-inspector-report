@@ -278,7 +278,19 @@ def write_report(
 
 
 def main():
-    pass
+    args = parse_args()
+    print("Fetching findings from AWS Inspector v2...")
+    raw_findings = fetch_findings(args)
+    print(f"Retrieved {len(raw_findings)} findings.")
+
+    findings = normalize_findings(raw_findings)
+
+    severity_summary = build_severity_summary(findings)
+    repo_summary = build_repo_summary(findings)
+    repo_findings = build_repo_findings(findings)
+
+    write_report(args.output, severity_summary, repo_summary, repo_findings)
+    print(f"Report written to: {args.output}")
 
 
 if __name__ == "__main__":
