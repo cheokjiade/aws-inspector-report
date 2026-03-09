@@ -88,6 +88,30 @@ def test_normalize_remediation_text():
     assert result[0]["remediation"] == "Update libssl to 3.0.9"
 
 
+def test_normalize_remediation_none_provided_excluded():
+    raw = [make_finding(remediation_text="None provided")]
+    result = normalize_findings(raw)
+    assert "None provided" not in result[0]["remediation"]
+
+
+def test_normalize_remediation_package_fix():
+    raw = [make_finding()]
+    raw[0]["packageVulnerabilityDetails"] = {
+        "vulnerablePackages": [{"remediation": "Update to 3.0.9"}]
+    }
+    result = normalize_findings(raw)
+    assert "Update to 3.0.9" in result[0]["remediation"]
+
+
+def test_normalize_remediation_deduplicates_package_fixes():
+    raw = [make_finding(remediation_text="Update to 3.0.9")]
+    raw[0]["packageVulnerabilityDetails"] = {
+        "vulnerablePackages": [{"remediation": "Update to 3.0.9"}]
+    }
+    result = normalize_findings(raw)
+    assert result[0]["remediation"].count("Update to 3.0.9") == 1
+
+
 def test_normalize_empty_remediation():
     raw = [make_finding()]
     result = normalize_findings(raw)

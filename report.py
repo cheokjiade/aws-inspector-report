@@ -136,11 +136,18 @@ def normalize_findings(raw_findings: list) -> list:
 
         days_old = (now - first_observed).days
         recommendation = f.get("remediation", {}).get("recommendation", {})
-        remediation_parts = [recommendation.get("text", "") or ""]
+        remediation_parts = []
+        rec_text = recommendation.get("text", "") or ""
+        if rec_text and rec_text.strip().lower() != "none provided":
+            remediation_parts.append(rec_text)
         remediation_url = recommendation.get("url", "")
         if remediation_url:
             remediation_parts.append(remediation_url)
-        remediation = "\n".join(p for p in remediation_parts if p)
+        for pkg in f.get("packageVulnerabilityDetails", {}).get("vulnerablePackages", []):
+            pkg_fix = (pkg.get("remediation", "") or "").strip()
+            if pkg_fix and pkg_fix not in remediation_parts:
+                remediation_parts.append(pkg_fix)
+        remediation = "\n".join(remediation_parts)
 
         repo = ""
         for resource in f.get("resources", []):
