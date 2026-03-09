@@ -121,11 +121,16 @@ def normalize_findings(raw_findings: list) -> list:
         if severity_label not in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
             severity_label = "UNTRIAGED"
 
-        first_observed_str = f.get("firstObservedAt", "")
+        first_observed_raw = f.get("firstObservedAt", "")
         try:
-            first_observed = datetime.fromisoformat(
-                first_observed_str.replace("Z", "+00:00")
-            )
+            if isinstance(first_observed_raw, datetime):
+                first_observed = first_observed_raw
+                if first_observed.tzinfo is None:
+                    first_observed = first_observed.replace(tzinfo=timezone.utc)
+            else:
+                first_observed = datetime.fromisoformat(
+                    str(first_observed_raw).replace("Z", "+00:00")
+                )
         except (ValueError, AttributeError):
             first_observed = now
 

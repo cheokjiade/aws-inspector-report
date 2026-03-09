@@ -61,6 +61,14 @@ def test_normalize_severity_as_plain_string():
     assert result[0]["severity"] == "HIGH"
 
 
+def test_normalize_first_observed_as_datetime_object():
+    """boto3 deserializes firstObservedAt as a datetime object, not a string."""
+    raw = [make_finding(days_ago=10)]
+    raw[0]["firstObservedAt"] = datetime.now(timezone.utc) - timedelta(days=10)
+    result = normalize_findings(raw)
+    assert result[0]["age_bucket"] == "< 30 days"
+
+
 def test_normalize_informational_becomes_untriaged():
     raw = [make_finding(severity="INFORMATIONAL")]
     result = normalize_findings(raw)
