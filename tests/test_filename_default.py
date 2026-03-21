@@ -31,7 +31,9 @@ def test_main_uses_default_filename(mock_write, mock_datetime, mock_get_account_
     # The default should be 111222333444-inspector-report-260309-1430.xlsx
     expected_filename = "111222333444-inspector-report-260309-1430.xlsx"
     
-    # check if the first call to write_report has the expected filename as its first arg
-    mock_write.assert_called_once()
-    actual_filename = mock_write.call_args[0][0]
+    # check that write_report was called twice (main + latest-image report)
+    assert mock_write.call_count == 2
+    actual_filename = mock_write.call_args_list[0][0][0]
     assert actual_filename == expected_filename
+    latest_filename = mock_write.call_args_list[1][0][0]
+    assert latest_filename == "111222333444-inspector-report-260309-1430-latest.xlsx"

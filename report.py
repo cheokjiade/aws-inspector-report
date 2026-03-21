@@ -43,6 +43,10 @@ def parse_args(argv=None):
         "--region", default=None,
         help="AWS region (default: from AWS_DEFAULT_REGION env var)"
     )
+    parser.add_argument(
+        "--skip-latest", action="store_true",
+        help="Skip generating the latest-image-only report"
+    )
     args = parser.parse_args(argv)
     if args.status is None:
         args.status = ["ACTIVE"]
@@ -59,6 +63,43 @@ def get_account_id(region=None):
         return sts.get_caller_identity()["Account"]
     except Exception:
         return "unknown"
+
+
+def _get_image_details(finding):
+    """Extract ECR image details from a finding's resources."""
+    for resource in finding.get("resources", []):
+        details = resource.get("details", {}).get("awsEcrContainerImage", {})
+        if details.get("repositoryName"):
+            return details
+    return {}
+
+
+def filter_latest_image_findings(raw_findings):
+    """Return only findings for the latest (most recently pushed) image per repo."""
+    # Track the latest pushedAt per repo
+    latest_by_repo = {}  # repo -> (pushedAt, imageHash)
+    for f in raw_findings:
+        details = _get_image_details(f)
+        repo = details.get("repositoryName")
+        image_hash = details.get("imageHash")
+        pushed_at = details.get("pushedAt")
+        if not repo or not image_hash or not pushed_at:
+            continue
+        if isinstance(pushed_at, str):
+            pushed_at = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+        current = latest_by_repo.get(repo)
+        if current is None or pushed_at > current[0]:
+            latest_by_repo[repo] = (pushed_at, image_hash)
+
+    # Filter findings to only those matching the latest image per repo
+    result = []
+    for f in raw_findings:
+        details = _get_image_details(f)
+        repo = details.get("repositoryName")
+        image_hash = details.get("imageHash")
+        if repo in latest_by_repo and latest_by_repo[repo][1] == image_hash:
+            result.append(f)
+    return result
 
 
 def fetch_findings(args):
@@ -339,6 +380,17 @@ def main():
 
     write_report(args.output, severity_summary, repo_summary, repo_findings)
     print(f"Report written to: {args.output}")
+
+    if not args.skip_latest:
+        latest_raw = filter_latest_image_findings(raw_findings)
+        print(f"Filtered to {len(latest_raw)} findings for latest images.")
+        latest_findings = normalize_findings(latest_raw)
+        latest_severity = build_severity_summary(latest_findings)
+        latest_repo = build_repo_summary(latest_findings)
+        latest_repo_findings = build_repo_findings(latest_findings)
+        latest_output = args.output.replace(".xlsx", "-latest.xlsx")
+        write_report(latest_output, latest_severity, latest_repo, latest_repo_findings)
+        print(f"Latest-image report written to: {latest_output}")
 
 
 if __name__ == "__main__":
