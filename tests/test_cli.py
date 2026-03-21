@@ -4,7 +4,7 @@ from report import parse_args
 
 def test_defaults():
     args = parse_args([])
-    assert args.output == "inspector_report.xlsx"
+    assert args.output is None
     assert args.status == ["ACTIVE"]
     assert args.severity == []
     assert args.repo == []

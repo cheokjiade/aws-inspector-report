@@ -19,8 +19,8 @@ def parse_args(argv=None):
         description="Generate an Excel report from AWS Inspector v2 ECR findings."
     )
     parser.add_argument(
-        "--output", default="inspector_report.xlsx",
-        help="Output filename (default: inspector_report.xlsx)"
+        "--output", default=None,
+        help="Output filename (default: <aws_account_id>-inspector-report-<YYMMDD>-<HHmm>.xlsx)"
     )
     parser.add_argument(
         "--severity", action="append", default=[],
@@ -47,6 +47,18 @@ def parse_args(argv=None):
     if args.status is None:
         args.status = ["ACTIVE"]
     return args
+
+
+def get_account_id(region=None):
+    """Fetch the AWS account ID using STS."""
+    kwargs = {}
+    if region:
+        kwargs["region_name"] = region
+    sts = boto3.client("sts", **kwargs)
+    try:
+        return sts.get_caller_identity()["Account"]
+    except Exception:
+        return "unknown"
 
 
 def fetch_findings(args):
@@ -309,6 +321,12 @@ def write_report(
 
 def main():
     args = parse_args()
+
+    if args.output is None:
+        account_id = get_account_id(args.region)
+        timestamp = datetime.now().strftime("%y%m%d-%H%M")
+        args.output = f"{account_id}-inspector-report-{timestamp}.xlsx"
+
     print("Fetching findings from AWS Inspector v2...")
     raw_findings = fetch_findings(args)
     print(f"Retrieved {len(raw_findings)} findings.")

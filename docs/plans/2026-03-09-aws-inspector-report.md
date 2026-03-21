@@ -1153,7 +1153,7 @@ python report.py
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--output FILE` | Output filename | `inspector_report.xlsx` |
+| `--output FILE` | Output filename | `<aws_account_id>-inspector-report-<YYMMDD>-<HHmm>.xlsx` |
 | `--severity LEVEL` | Filter by severity (repeatable) | all severities |
 | `--repo NAME` | Filter by ECR repo name (repeatable) | all repos |
 | `--status STATUS` | Finding status filter (repeatable) | `ACTIVE` |

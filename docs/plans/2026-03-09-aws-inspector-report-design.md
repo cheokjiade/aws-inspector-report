@@ -56,7 +56,7 @@ Sorted by severity (Critical → High → Medium → Low → Untriaged), then by
 python report.py [OPTIONS]
 
 Options:
-  --output FILE        Output filename (default: inspector_report.xlsx)
+  --output FILE        Output filename (default: <aws_account_id>-inspector-report-<YYMMDD>-<HHmm>.xlsx)
   --severity LEVEL     Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL
                        (repeatable)
   --repo NAME          Filter to specific ECR repo name (repeatable)
