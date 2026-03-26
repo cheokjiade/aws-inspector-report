@@ -74,8 +74,40 @@ def _get_image_details(finding):
     return {}
 
 
-def filter_latest_image_findings(raw_findings):
-    """Return only findings for the latest (most recently pushed) image per repo."""
+def fetch_ecr_latest_digests(repo_names, region=None):
+    """Query ECR to get the image digest of the latest (most recently pushed) image per repo."""
+    kwargs = {}
+    if region:
+        kwargs["region_name"] = region
+    ecr = boto3.client("ecr", **kwargs)
+    latest = {}
+    for repo in repo_names:
+        try:
+            paginator = ecr.get_paginator("describe_images")
+            best_pushed = None
+            best_digest = None
+            for page in paginator.paginate(repositoryName=repo):
+                for img in page.get("imageDetails", []):
+                    pushed = img.get("imagePushedAt")
+                    digest = img.get("imageDigest")
+                    if pushed and digest:
+                        if best_pushed is None or pushed > best_pushed:
+                            best_pushed = pushed
+                            best_digest = digest
+            if best_digest:
+                latest[repo] = best_digest
+        except Exception:
+            continue
+    return latest
+
+
+def filter_latest_image_findings(raw_findings, ecr_latest=None):
+    """Return only findings for the latest (most recently pushed) image per repo.
+
+    If ecr_latest is provided (dict of repo -> imageDigest), only include
+    findings for repos where the latest Inspector image matches the latest
+    ECR image.  A mismatch means the actual latest ECR image has no findings.
+    """
     # Track the latest pushedAt per repo
     latest_by_repo = {}  # repo -> (pushedAt, imageHash)
     for f in raw_findings:
@@ -90,6 +122,13 @@ def filter_latest_image_findings(raw_findings):
         current = latest_by_repo.get(repo)
         if current is None or pushed_at > current[0]:
             latest_by_repo[repo] = (pushed_at, image_hash)
+
+    # Exclude repos where Inspector's latest image doesn't match ECR's actual latest
+    if ecr_latest:
+        for repo in list(latest_by_repo.keys()):
+            ecr_digest = ecr_latest.get(repo)
+            if ecr_digest and latest_by_repo[repo][1] != ecr_digest:
+                del latest_by_repo[repo]
 
     # Filter findings to only those matching the latest image per repo
     result = []
@@ -382,7 +421,15 @@ def main():
     print(f"Report written to: {args.output}")
 
     if not args.skip_latest:
-        latest_raw = filter_latest_image_findings(raw_findings)
+        repos_in_findings = set()
+        for f in raw_findings:
+            details = _get_image_details(f)
+            repo = details.get("repositoryName")
+            if repo:
+                repos_in_findings.add(repo)
+        print("Querying ECR for latest image digests...")
+        ecr_latest = fetch_ecr_latest_digests(repos_in_findings, args.region)
+        latest_raw = filter_latest_image_findings(raw_findings, ecr_latest)
         print(f"Filtered to {len(latest_raw)} findings for latest images.")
         latest_findings = normalize_findings(latest_raw)
         latest_severity = build_severity_summary(latest_findings)

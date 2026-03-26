@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
-from report import filter_latest_image_findings
+from unittest.mock import patch, MagicMock
+from report import filter_latest_image_findings, fetch_ecr_latest_digests
 
 
 def _make_finding(repo, image_hash, pushed_at, severity="HIGH"):
@@ -72,6 +73,88 @@ def test_handles_pushed_at_as_string():
     result = filter_latest_image_findings(findings)
     assert len(result) == 1
     assert _get_hash(result[0]) == "sha256:new"
+
+
+def test_excludes_repo_when_inspector_latest_differs_from_ecr():
+    """If ECR's latest image differs from Inspector's latest, exclude that repo."""
+    pushed = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    findings = [
+        _make_finding("app-a", "sha256:inspector_latest", pushed),
+        _make_finding("app-b", "sha256:matches_ecr", pushed),
+    ]
+    ecr_latest = {
+        "app-a": "sha256:ecr_newest_image",   # different → exclude app-a
+        "app-b": "sha256:matches_ecr",         # same → keep app-b
+    }
+    result = filter_latest_image_findings(findings, ecr_latest)
+    repos = [_get_repo(f) for f in result]
+    assert "app-a" not in repos
+    assert "app-b" in repos
+    assert len(result) == 1
+
+
+def test_keeps_repo_when_ecr_latest_not_available():
+    """If ECR lookup didn't return a digest for a repo, keep its findings."""
+    pushed = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    findings = [
+        _make_finding("app-a", "sha256:aaa", pushed),
+    ]
+    ecr_latest = {}  # no ECR info for app-a
+    result = filter_latest_image_findings(findings, ecr_latest)
+    assert len(result) == 1
+
+
+def test_ecr_latest_none_behaves_as_before():
+    """When ecr_latest is None (not provided), all latest-per-repo findings are kept."""
+    old = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    new = datetime(2024, 6, 1, tzinfo=timezone.utc)
+    findings = [
+        _make_finding("app-a", "sha256:old111", old),
+        _make_finding("app-a", "sha256:new222", new),
+    ]
+    result = filter_latest_image_findings(findings, ecr_latest=None)
+    assert len(result) == 1
+    assert _get_hash(result[0]) == "sha256:new222"
+
+
+@patch("report.boto3")
+def test_fetch_ecr_latest_digests(mock_boto3):
+    mock_ecr = MagicMock()
+    mock_boto3.client.return_value = mock_ecr
+
+    mock_paginator = MagicMock()
+    mock_ecr.get_paginator.return_value = mock_paginator
+    mock_paginator.paginate.return_value = [
+        {
+            "imageDetails": [
+                {
+                    "imageDigest": "sha256:older",
+                    "imagePushedAt": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                },
+                {
+                    "imageDigest": "sha256:newest",
+                    "imagePushedAt": datetime(2024, 6, 1, tzinfo=timezone.utc),
+                },
+            ]
+        }
+    ]
+
+    result = fetch_ecr_latest_digests(["my-repo"], region="us-east-1")
+    assert result == {"my-repo": "sha256:newest"}
+    mock_boto3.client.assert_called_once_with("ecr", region_name="us-east-1")
+
+
+@patch("report.boto3")
+def test_fetch_ecr_latest_digests_handles_error(mock_boto3):
+    mock_ecr = MagicMock()
+    mock_boto3.client.return_value = mock_ecr
+
+    mock_paginator = MagicMock()
+    mock_ecr.get_paginator.return_value = mock_paginator
+    mock_paginator.paginate.side_effect = Exception("repo not found")
+
+    result = fetch_ecr_latest_digests(["missing-repo"])
+    assert result == {}
 
 
 def _get_repo(finding):
