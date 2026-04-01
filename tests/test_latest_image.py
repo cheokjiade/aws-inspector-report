@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
-from report import filter_latest_image_findings, fetch_ecr_latest_digests
+from report import filter_latest_image_findings, fetch_ecr_images, latest_digests_from_images
 
 
 def _make_finding(repo, image_hash, pushed_at, severity="HIGH"):
@@ -118,7 +118,7 @@ def test_ecr_latest_none_behaves_as_before():
 
 
 @patch("report.boto3")
-def test_fetch_ecr_latest_digests(mock_boto3):
+def test_fetch_ecr_images(mock_boto3):
     mock_ecr = MagicMock()
     mock_boto3.client.return_value = mock_ecr
 
@@ -130,22 +130,32 @@ def test_fetch_ecr_latest_digests(mock_boto3):
                 {
                     "imageDigest": "sha256:older",
                     "imagePushedAt": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    "imageTags": ["v1.0"],
+                    "lastRecordedPullTime": datetime(2024, 2, 1, tzinfo=timezone.utc),
                 },
                 {
                     "imageDigest": "sha256:newest",
                     "imagePushedAt": datetime(2024, 6, 1, tzinfo=timezone.utc),
+                    "imageTags": ["v2.0", "latest"],
                 },
             ]
         }
     ]
 
-    result = fetch_ecr_latest_digests(["my-repo"], region="us-east-1")
-    assert result == {"my-repo": "sha256:newest"}
+    result = fetch_ecr_images(["my-repo"], region="us-east-1")
+    assert "my-repo" in result
+    assert len(result["my-repo"]) == 2
+    assert result["my-repo"][0]["digest"] == "sha256:older"
+    assert result["my-repo"][0]["tags"] == ["v1.0"]
+    assert result["my-repo"][0]["last_pulled"] == datetime(2024, 2, 1, tzinfo=timezone.utc)
+    assert result["my-repo"][1]["digest"] == "sha256:newest"
+    assert result["my-repo"][1]["tags"] == ["v2.0", "latest"]
+    assert result["my-repo"][1]["last_pulled"] is None
     mock_boto3.client.assert_called_once_with("ecr", region_name="us-east-1")
 
 
 @patch("report.boto3")
-def test_fetch_ecr_latest_digests_handles_error(mock_boto3):
+def test_fetch_ecr_images_handles_error(mock_boto3):
     mock_ecr = MagicMock()
     mock_boto3.client.return_value = mock_ecr
 
@@ -153,8 +163,27 @@ def test_fetch_ecr_latest_digests_handles_error(mock_boto3):
     mock_ecr.get_paginator.return_value = mock_paginator
     mock_paginator.paginate.side_effect = Exception("repo not found")
 
-    result = fetch_ecr_latest_digests(["missing-repo"])
+    result = fetch_ecr_images(["missing-repo"])
     assert result == {}
+
+
+def test_latest_digests_from_images():
+    all_images = {
+        "app-a": [
+            {"digest": "sha256:old", "tags": ["v1"], "pushed_at": datetime(2024, 1, 1, tzinfo=timezone.utc), "last_pulled": None},
+            {"digest": "sha256:new", "tags": ["v2"], "pushed_at": datetime(2024, 6, 1, tzinfo=timezone.utc), "last_pulled": None},
+        ],
+        "app-b": [
+            {"digest": "sha256:only", "tags": [], "pushed_at": datetime(2024, 3, 1, tzinfo=timezone.utc), "last_pulled": None},
+        ],
+    }
+    result = latest_digests_from_images(all_images)
+    assert result == {"app-a": "sha256:new", "app-b": "sha256:only"}
+
+
+def test_latest_digests_from_images_empty():
+    assert latest_digests_from_images({}) == {}
+    assert latest_digests_from_images({"app-a": []}) == {}
 
 
 def _get_repo(finding):

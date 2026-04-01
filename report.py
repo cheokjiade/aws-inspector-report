@@ -47,6 +47,10 @@ def parse_args(argv=None):
         "--skip-latest", action="store_true",
         help="Skip generating the latest-image-only report"
     )
+    parser.add_argument(
+        "--skip-cleanup", action="store_true",
+        help="Skip generating the ECR image cleanup report"
+    )
     args = parser.parse_args(argv)
     if args.status is None:
         args.status = ["ACTIVE"]
@@ -74,30 +78,47 @@ def _get_image_details(finding):
     return {}
 
 
-def fetch_ecr_latest_digests(repo_names, region=None):
-    """Query ECR to get the image digest of the latest (most recently pushed) image per repo."""
+def fetch_ecr_images(repo_names, region=None):
+    """Fetch all image details from ECR for the given repos.
+
+    Returns {repo: [{"digest", "tags", "pushed_at", "last_pulled"}, ...]}.
+    """
     kwargs = {}
     if region:
         kwargs["region_name"] = region
     ecr = boto3.client("ecr", **kwargs)
-    latest = {}
+    all_images = {}
     for repo in repo_names:
         try:
             paginator = ecr.get_paginator("describe_images")
-            best_pushed = None
-            best_digest = None
+            images = []
             for page in paginator.paginate(repositoryName=repo):
                 for img in page.get("imageDetails", []):
-                    pushed = img.get("imagePushedAt")
                     digest = img.get("imageDigest")
-                    if pushed and digest:
-                        if best_pushed is None or pushed > best_pushed:
-                            best_pushed = pushed
-                            best_digest = digest
-            if best_digest:
-                latest[repo] = best_digest
+                    pushed = img.get("imagePushedAt")
+                    if digest and pushed:
+                        images.append({
+                            "digest": digest,
+                            "tags": img.get("imageTags", []),
+                            "pushed_at": pushed,
+                            "last_pulled": img.get("lastRecordedPullTime"),
+                        })
+            all_images[repo] = images
         except Exception:
             continue
+    return all_images
+
+
+def latest_digests_from_images(all_images):
+    """Derive the latest image digest per repo from fetch_ecr_images output."""
+    latest = {}
+    for repo, images in all_images.items():
+        best = None
+        for img in images:
+            if best is None or img["pushed_at"] > best["pushed_at"]:
+                best = img
+        if best:
+            latest[repo] = best["digest"]
     return latest
 
 
@@ -399,6 +420,61 @@ def write_report(
     wb.save(output_path)
 
 
+def write_ecr_cleanup_report(output_path, all_images, latest_digests, region=None):
+    """Write an ECR image cleanup report with images to delete and latest images."""
+    wb = openpyxl.Workbook()
+
+    region_flag = f" --region {region}" if region else ""
+
+    # --- Sheet 1: Images to Delete ---
+    ws1 = wb.active
+    ws1.title = "Images to Delete"
+    headers = ["Repository", "Image Tags", "Image Digest", "Date Pushed",
+               "Date Last Pulled", "Delete Command"]
+    ws1.append(headers)
+    for col in range(1, len(headers) + 1):
+        _bold(ws1, 1, col)
+
+    for repo in sorted(all_images.keys()):
+        latest_digest = latest_digests.get(repo)
+        old_images = [
+            img for img in all_images[repo]
+            if img["digest"] != latest_digest
+        ]
+        old_images.sort(key=lambda img: img["pushed_at"], reverse=True)
+        for img in old_images:
+            tags = ", ".join(img["tags"]) if img["tags"] else "(untagged)"
+            pushed_str = img["pushed_at"].strftime("%Y-%m-%d %H:%M:%S") if img["pushed_at"] else ""
+            pulled_str = img["last_pulled"].strftime("%Y-%m-%d %H:%M:%S") if img["last_pulled"] else ""
+            cmd = (f"aws ecr batch-delete-image --repository-name {repo}"
+                   f" --image-ids imageDigest={img['digest']}{region_flag}")
+            ws1.append([repo, tags, img["digest"], pushed_str, pulled_str, cmd])
+
+    ws1.freeze_panes = "A2"
+
+    # --- Sheet 2: Latest Images ---
+    ws2 = wb.create_sheet("Latest Images")
+    headers2 = ["Repository", "Image Tags", "Image Digest", "Date Pushed",
+                "Date Last Pulled"]
+    ws2.append(headers2)
+    for col in range(1, len(headers2) + 1):
+        _bold(ws2, 1, col)
+
+    for repo in sorted(all_images.keys()):
+        latest_digest = latest_digests.get(repo)
+        for img in all_images[repo]:
+            if img["digest"] == latest_digest:
+                tags = ", ".join(img["tags"]) if img["tags"] else "(untagged)"
+                pushed_str = img["pushed_at"].strftime("%Y-%m-%d %H:%M:%S") if img["pushed_at"] else ""
+                pulled_str = img["last_pulled"].strftime("%Y-%m-%d %H:%M:%S") if img["last_pulled"] else ""
+                ws2.append([repo, tags, img["digest"], pushed_str, pulled_str])
+                break
+
+    ws2.freeze_panes = "A2"
+
+    wb.save(output_path)
+
+
 def main():
     args = parse_args()
 
@@ -420,15 +496,21 @@ def main():
     write_report(args.output, severity_summary, repo_summary, repo_findings)
     print(f"Report written to: {args.output}")
 
-    if not args.skip_latest:
+    need_ecr = not args.skip_latest or not args.skip_cleanup
+    ecr_images = {}
+    ecr_latest = {}
+    if need_ecr:
         repos_in_findings = set()
         for f in raw_findings:
             details = _get_image_details(f)
             repo = details.get("repositoryName")
             if repo:
                 repos_in_findings.add(repo)
-        print("Querying ECR for latest image digests...")
-        ecr_latest = fetch_ecr_latest_digests(repos_in_findings, args.region)
+        print("Querying ECR for image details...")
+        ecr_images = fetch_ecr_images(repos_in_findings, args.region)
+        ecr_latest = latest_digests_from_images(ecr_images)
+
+    if not args.skip_latest:
         latest_raw = filter_latest_image_findings(raw_findings, ecr_latest)
         print(f"Filtered to {len(latest_raw)} findings for latest images.")
         latest_findings = normalize_findings(latest_raw)
@@ -438,6 +520,15 @@ def main():
         latest_output = args.output.replace(".xlsx", "-latest.xlsx")
         write_report(latest_output, latest_severity, latest_repo, latest_repo_findings)
         print(f"Latest-image report written to: {latest_output}")
+
+    if not args.skip_cleanup:
+        cleanup_output = args.output.replace(".xlsx", "-ecr-cleanup.xlsx")
+        write_ecr_cleanup_report(cleanup_output, ecr_images, ecr_latest, args.region)
+        total_old = sum(
+            sum(1 for img in imgs if img["digest"] != ecr_latest.get(repo))
+            for repo, imgs in ecr_images.items()
+        )
+        print(f"ECR cleanup report written to: {cleanup_output} ({total_old} old images across {len(ecr_images)} repos)")
 
 
 if __name__ == "__main__":
