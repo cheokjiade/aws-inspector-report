@@ -57,3 +57,27 @@ def test_find_history_reports_empty_dir(tmp_path):
 
 def test_find_history_reports_missing_dir():
     assert find_history_reports("/nonexistent/path/xyz", "111", max_age_days=60, now=NOW) == []
+
+
+def test_parse_report_filename_invalid_date_in_valid_pattern():
+    # Regex matches (6 digits + 4 digits) but date is semantically invalid
+    assert parse_report_filename("111-inspector-report-261399-2500-latest.xlsx") is None
+
+
+def test_find_history_reports_includes_report_at_exact_cutoff(tmp_path):
+    # Report timestamped exactly at (now - max_age_days) should be included (cutoff is strict <)
+    exact_cutoff = NOW - timedelta(days=60)
+    fname = f"111-inspector-report-{exact_cutoff.strftime('%y%m%d-%H%M')}-latest.xlsx"
+    (tmp_path / fname).write_bytes(b"")
+    result = find_history_reports(str(tmp_path), "111", max_age_days=60, now=NOW)
+    assert len(result) == 1
+    assert result[0].endswith(fname)
+
+
+def test_find_history_reports_excludes_report_just_before_cutoff(tmp_path):
+    # One minute older than the cutoff — must be excluded
+    just_before = NOW - timedelta(days=60, minutes=1)
+    fname = f"111-inspector-report-{just_before.strftime('%y%m%d-%H%M')}-latest.xlsx"
+    (tmp_path / fname).write_bytes(b"")
+    result = find_history_reports(str(tmp_path), "111", max_age_days=60, now=NOW)
+    assert result == []
