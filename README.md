@@ -119,6 +119,12 @@ python report.py --skip-latest --skip-cleanup
 
 # Specify a region explicitly
 python report.py --region us-west-2
+
+# Disable first-discovered preservation (skip scanning past -latest.xlsx reports)
+python report.py --history-days 0
+
+# Look back 90 days for past reports instead of the 60-day default
+python report.py --history-days 90
 ```
 
 ## Output
@@ -129,7 +135,7 @@ A single run produces up to three Excel workbooks:
 
 - **Severity Summary** — vulnerability counts by severity level and age bracket (< 30 days, 30-60, 60-90, > 90 days)
 - **Repository Summary** — vulnerability counts by ECR repository and severity level
-- **Per-repo sheets** — detailed findings for each repository (title, remediation, severity, first discovered date)
+- **Per-repo sheets** — detailed findings for each repository. Columns: S/N, Title, Remediation, Severity, First Discovered, Vulnerability ID
 
 ### 2. Latest-image report (`*-inspector-report-*-latest.xlsx`)
 
