@@ -409,8 +409,9 @@ def write_report(
             counter += 1
         used_sheet_names.add(sheet_name)
         ws = wb.create_sheet(sheet_name)
-        ws.append(["S/N", "Title", "Remediation", "Severity", "First Discovered", "Vulnerability ID"])
-        for col in range(1, 7):
+        repo_headers = ["S/N", "Title", "Remediation", "Severity", "First Discovered", "Vulnerability ID"]
+        ws.append(repo_headers)
+        for col in range(1, len(repo_headers) + 1):
             _bold(ws, 1, col)
         for i, f in enumerate(repo_findings[repo], start=1):
             ws.append([

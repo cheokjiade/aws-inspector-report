@@ -143,3 +143,26 @@ def test_normalize_missing_repo_becomes_unknown():
     }]
     result = normalize_findings(raw)
     assert result[0]["repo"] == "(unknown)"
+
+
+# --- vulnerability_id extraction tests ---
+
+def test_normalize_extracts_vulnerability_id():
+    raw = [make_finding()]
+    raw[0]["packageVulnerabilityDetails"] = {"vulnerabilityId": "CVE-2024-9999"}
+    result = normalize_findings(raw)
+    assert result[0]["vulnerability_id"] == "CVE-2024-9999"
+
+
+def test_normalize_vulnerability_id_null_becomes_empty_string():
+    raw = [make_finding()]
+    raw[0]["packageVulnerabilityDetails"] = {"vulnerabilityId": None}
+    result = normalize_findings(raw)
+    assert result[0]["vulnerability_id"] == ""
+
+
+def test_normalize_vulnerability_id_missing_field_becomes_empty_string():
+    raw = [make_finding()]
+    # No packageVulnerabilityDetails at all
+    result = normalize_findings(raw)
+    assert result[0]["vulnerability_id"] == ""
