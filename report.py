@@ -60,6 +60,89 @@ def find_history_reports(search_dir, account_id, max_age_days, now=None):
     return results
 
 
+def _derive_sheet_name_for_repo(repo, used_names):
+    """Replicate the sheet-name truncation/collision logic from write_report."""
+    base = repo[:31]
+    sheet_name = base
+    counter = 2
+    while sheet_name in used_names:
+        suffix = f"_{counter}"
+        sheet_name = base[:31 - len(suffix)] + suffix
+        counter += 1
+    return sheet_name
+
+
+def _repos_in_order_from_summary(workbook):
+    """Read full repo names from the Repository Summary sheet in written order."""
+    if "Repository Summary" not in workbook.sheetnames:
+        return []
+    ws = workbook["Repository Summary"]
+    repos = []
+    for row in range(2, ws.max_row + 1):
+        name = ws.cell(row, 1).value
+        if name is None or name == "Total":
+            continue
+        repos.append(str(name))
+    return repos
+
+
+def _parse_history_date(value):
+    """Parse a date cell from a past report. Returns UTC datetime or None."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+def read_history_from_report(path):
+    """Read {(repo, title): first_discovered_utc} from a past latest-report xlsx.
+
+    Uses the Repository Summary sheet to learn full repo names, then reproduces
+    write_report's sheet-name truncation to locate each per-repo sheet. Column
+    indices are looked up by header name (resilient to new columns). Returns an
+    empty dict on any error (missing file, unreadable, unexpected format).
+    """
+    import openpyxl
+    try:
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    except Exception:
+        return {}
+
+    result = {}
+    try:
+        repos = _repos_in_order_from_summary(wb)
+        used_sheet_names = set()
+        for repo in repos:
+            sheet_name = _derive_sheet_name_for_repo(repo, used_sheet_names)
+            used_sheet_names.add(sheet_name)
+            if sheet_name not in wb.sheetnames:
+                continue
+            ws = wb[sheet_name]
+            headers = {ws.cell(1, c).value: c for c in range(1, ws.max_column + 1)}
+            title_col = headers.get("Title")
+            date_col = headers.get("First Discovered")
+            if not title_col or not date_col:
+                continue
+            for row in range(2, ws.max_row + 1):
+                title = ws.cell(row, title_col).value
+                date_raw = ws.cell(row, date_col).value
+                if not title or not date_raw:
+                    continue
+                parsed_date = _parse_history_date(date_raw)
+                if parsed_date is None:
+                    continue
+                key = (repo, str(title))
+                if key not in result or parsed_date < result[key]:
+                    result[key] = parsed_date
+    finally:
+        wb.close()
+    return result
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate an Excel report from AWS Inspector v2 ECR findings."
