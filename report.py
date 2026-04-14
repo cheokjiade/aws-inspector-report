@@ -2,8 +2,10 @@
 """AWS Inspector v2 ECR vulnerability report generator."""
 
 import argparse
+import os
+import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import boto3
 import openpyxl
@@ -12,6 +14,50 @@ from openpyxl.styles import Font
 
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNTRIAGED"]
 AGE_BUCKETS = ["< 30 days", "30-60 days", "60-90 days", "> 90 days"]
+
+
+_LATEST_REPORT_RE = re.compile(
+    r"^(?P<account>\d+)-inspector-report-(?P<date>\d{6})-(?P<time>\d{4})-latest\.xlsx$"
+)
+
+
+def parse_report_filename(path):
+    """Parse a latest-report filename into (account_id, timestamp_utc).
+
+    Returns None if the filename does not match the pattern.
+    """
+    basename = os.path.basename(path)
+    m = _LATEST_REPORT_RE.match(basename)
+    if not m:
+        return None
+    try:
+        ts = datetime.strptime(m.group("date") + m.group("time"), "%y%m%d%H%M")
+        ts = ts.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return (m.group("account"), ts)
+
+
+def find_history_reports(search_dir, account_id, max_age_days, now=None):
+    """Return sorted list of -latest.xlsx report paths matching account_id within max_age_days."""
+    if not os.path.isdir(search_dir):
+        return []
+    if now is None:
+        now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=max_age_days)
+    results = []
+    for name in os.listdir(search_dir):
+        parsed = parse_report_filename(name)
+        if parsed is None:
+            continue
+        acct, ts = parsed
+        if acct != account_id:
+            continue
+        if ts < cutoff:
+            continue
+        results.append(os.path.join(search_dir, name))
+    results.sort()
+    return results
 
 
 def parse_args(argv=None):
