@@ -131,18 +131,20 @@ def test_read_history_from_report_handles_truncated_repo_name(tmp_path):
     # Two repos that both truncate to the same 31-char prefix
     repo_long_a = "a" * 32 + "X"
     repo_long_b = "a" * 32 + "Y"
-    date = datetime(2025, 10, 1, tzinfo=timezone.utc)
+    date_a = datetime(2025, 10, 1, tzinfo=timezone.utc)
+    date_b = datetime(2025, 11, 1, tzinfo=timezone.utc)
     findings = [
-        _finding(repo_long_a, "Title A", date),
-        _finding(repo_long_b, "Title B", date),
+        _finding(repo_long_a, "Title A", date_a),
+        _finding(repo_long_b, "Title B", date_b),
     ]
     path = str(tmp_path / "111-inspector-report-251001-1000-latest.xlsx")
     _write_fixture_report(path, findings)
 
     history = read_history_from_report(path)
-    # Full repo names must be used as keys, not truncated sheet names
-    assert (repo_long_a, "Title A") in history
-    assert (repo_long_b, "Title B") in history
+    # Distinct dates confirm each repo's sheet was resolved correctly,
+    # not just that both keys landed in the result.
+    assert history[(repo_long_a, "Title A")] == date_a
+    assert history[(repo_long_b, "Title B")] == date_b
 
 
 def test_read_history_from_report_missing_file_returns_empty(tmp_path):

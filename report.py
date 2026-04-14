@@ -106,7 +106,6 @@ def read_history_from_report(path):
     indices are looked up by header name (resilient to new columns). Returns an
     empty dict on any error (missing file, unreadable, unexpected format).
     """
-    import openpyxl
     try:
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     except Exception:
@@ -116,6 +115,12 @@ def read_history_from_report(path):
     try:
         repos = _repos_in_order_from_summary(wb)
         used_sheet_names = set()
+        # Reproduce write_report's collision assignment: repos must be iterated
+        # in the same order write_report used (sorted alphabetically). The sheet
+        # is written in that order, so reading Repository Summary row-by-row
+        # recovers the same sequence. Do not change this ordering without
+        # updating write_report in lockstep, or truncated sheet names will
+        # silently mismatch.
         for repo in repos:
             sheet_name = _derive_sheet_name_for_repo(repo, used_sheet_names)
             used_sheet_names.add(sheet_name)
