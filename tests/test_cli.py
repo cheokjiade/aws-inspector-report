@@ -34,3 +34,21 @@ def test_status_override():
 def test_region_flag():
     args = parse_args(["--region", "ap-southeast-1"])
     assert args.region == "ap-southeast-1"
+
+
+def test_history_days_default_is_60():
+    from report import parse_args
+    args = parse_args([])
+    assert args.history_days == 60
+
+
+def test_history_days_accepts_zero():
+    from report import parse_args
+    args = parse_args(["--history-days", "0"])
+    assert args.history_days == 0
+
+
+def test_history_days_custom_value():
+    from report import parse_args
+    args = parse_args(["--history-days", "90"])
+    assert args.history_days == 90

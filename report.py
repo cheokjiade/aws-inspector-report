@@ -225,6 +225,11 @@ def parse_args(argv=None):
         "--skip-cleanup", action="store_true",
         help="Skip generating the ECR image cleanup report"
     )
+    parser.add_argument(
+        "--history-days", type=int, default=60, metavar="DAYS",
+        help="Look back N days of past -latest.xlsx reports to preserve first-discovered dates. "
+             "Set to 0 to disable. Only applies to the latest-image report. Default: 60"
+    )
     args = parser.parse_args(argv)
     if args.status is None:
         args.status = ["ACTIVE"]
@@ -659,8 +664,9 @@ def write_ecr_cleanup_report(output_path, all_images, latest_digests, region=Non
 def main():
     args = parse_args()
 
+    account_id = get_account_id(args.region)
+
     if args.output is None:
-        account_id = get_account_id(args.region)
         timestamp = datetime.now().strftime("%y%m%d-%H%M")
         args.output = f"{account_id}-inspector-report-{timestamp}.xlsx"
 
@@ -695,6 +701,14 @@ def main():
         latest_raw = filter_latest_image_findings(raw_findings, ecr_latest)
         print(f"Filtered to {len(latest_raw)} findings for latest images.")
         latest_findings = normalize_findings(latest_raw)
+
+        if args.history_days > 0:
+            history_dir = os.path.dirname(os.path.abspath(args.output)) or "."
+            history = load_history(history_dir, account_id, args.history_days)
+            if history:
+                matched = apply_history(latest_findings, history)
+                print(f"Applied {matched} first-discovered dates from {len(history)} historical entries.")
+
         latest_severity = build_severity_summary(latest_findings)
         latest_repo = build_repo_summary(latest_findings)
         latest_repo_findings = build_repo_findings(latest_findings)
