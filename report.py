@@ -274,6 +274,10 @@ def normalize_findings(raw_findings: list) -> list:
         if not repo:
             repo = "(unknown)"
 
+        vulnerability_id = (
+            f.get("packageVulnerabilityDetails", {}).get("vulnerabilityId", "") or ""
+        )
+
         results.append({
             "repo": repo,
             "severity": severity_label,
@@ -282,6 +286,7 @@ def normalize_findings(raw_findings: list) -> list:
             "first_observed": first_observed,
             "age_days": days_old,
             "age_bucket": age_bucket(days_old),
+            "vulnerability_id": vulnerability_id,
         })
     return results
 
@@ -404,8 +409,8 @@ def write_report(
             counter += 1
         used_sheet_names.add(sheet_name)
         ws = wb.create_sheet(sheet_name)
-        ws.append(["S/N", "Title", "Remediation", "Severity", "First Discovered"])
-        for col in range(1, 6):
+        ws.append(["S/N", "Title", "Remediation", "Severity", "First Discovered", "Vulnerability ID"])
+        for col in range(1, 7):
             _bold(ws, 1, col)
         for i, f in enumerate(repo_findings[repo], start=1):
             ws.append([
@@ -414,6 +419,7 @@ def write_report(
                 f["remediation"],
                 f["severity"].capitalize(),
                 f["first_observed"].strftime("%Y-%m-%d"),
+                f.get("vulnerability_id", ""),
             ])
         ws.freeze_panes = "A2"
 

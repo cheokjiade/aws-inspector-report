@@ -6,7 +6,7 @@ import openpyxl
 from report import write_report, build_severity_summary, build_repo_summary, build_repo_findings
 
 
-def make_normalized(severity="HIGH", repo="my-app", age_bucket="< 30 days"):
+def make_normalized(severity="HIGH", repo="my-app", age_bucket="< 30 days", vuln_id="CVE-2024-0001"):
     return {
         "repo": repo,
         "severity": severity,
@@ -15,6 +15,7 @@ def make_normalized(severity="HIGH", repo="my-app", age_bucket="< 30 days"):
         "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
         "age_days": 10,
         "age_bucket": age_bucket,
+        "vulnerability_id": vuln_id,
     }
 
 
@@ -80,8 +81,14 @@ def test_repo_summary_headers(report_file):
 def test_per_repo_sheet_headers(report_file):
     wb = openpyxl.load_workbook(report_file)
     ws = wb["app-a"]
-    headers = [ws.cell(1, c).value for c in range(1, 6)]
-    assert headers == ["S/N", "Title", "Remediation", "Severity", "First Discovered"]
+    headers = [ws.cell(1, c).value for c in range(1, 7)]
+    assert headers == ["S/N", "Title", "Remediation", "Severity", "First Discovered", "Vulnerability ID"]
+
+
+def test_per_repo_sheet_includes_vuln_id(report_file):
+    wb = openpyxl.load_workbook(report_file)
+    ws = wb["app-a"]
+    assert ws.cell(2, 6).value == "CVE-2024-0001"
 
 
 def test_per_repo_sheet_row_count(report_file):
@@ -115,6 +122,7 @@ def test_empty_repo_name_uses_unknown(tmp_path):
         "first_observed": datetime(2024, 6, 1, tzinfo=timezone.utc),
         "age_days": 10,
         "age_bucket": "< 30 days",
+        "vulnerability_id": "",
     }]
     output = str(tmp_path / "unknown_repo.xlsx")
     write_report(
