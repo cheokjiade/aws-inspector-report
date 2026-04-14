@@ -98,6 +98,7 @@ python report.py
 | `--repo NAME` | Filter by ECR repo name (repeatable) | all repos |
 | `--status STATUS` | Finding status filter (repeatable): ACTIVE, SUPPRESSED, CLOSED | `ACTIVE` |
 | `--region REGION` | AWS region | `AWS_DEFAULT_REGION` env var |
+| `--history-days DAYS` | Look back N days of past `-latest.xlsx` reports to preserve first-discovered dates (0 to disable) | `60` |
 | `--skip-latest` | Skip generating the latest-image-only report | |
 | `--skip-cleanup` | Skip generating the ECR image cleanup report | |
 
@@ -133,6 +134,8 @@ A single run produces up to three Excel workbooks:
 ### 2. Latest-image report (`*-inspector-report-*-latest.xlsx`)
 
 Same structure as the main report, but filtered to only include findings from the latest (most recently pushed) image per repository. If the latest image in ECR has no Inspector findings, that repository is excluded entirely.
+
+**First-discovered preservation:** AWS Inspector resets `firstObservedAt` when a new image digest replaces the previous latest image — even if the underlying CVE is unchanged. To preserve the true first-observed date, this tool scans the output directory for past `-latest.xlsx` reports (by default within the last 60 days, matching the current AWS account). When a finding's `(repository, title)` matches an entry in a past report, the earliest historical date is used instead. Disable with `--history-days 0`. Reports generated with a custom `--output` name that doesn't match the default pattern are not picked up as history.
 
 Skip with `--skip-latest`.
 
