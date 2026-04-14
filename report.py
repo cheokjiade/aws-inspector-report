@@ -148,6 +148,46 @@ def read_history_from_report(path):
     return result
 
 
+def load_history(search_dir, account_id, max_age_days, now=None):
+    """Merge historical first-discovered dates across all qualifying past reports.
+
+    For the same (repo, title) present in multiple past reports, the earliest
+    date wins. Failures reading any single report are logged and skipped.
+    """
+    merged = {}
+    paths = find_history_reports(search_dir, account_id, max_age_days, now=now)
+    for path in paths:
+        try:
+            per_report = read_history_from_report(path)
+        except Exception as e:
+            print(f"Warning: failed to read history from {path}: {e}")
+            continue
+        for key, date in per_report.items():
+            if key not in merged or date < merged[key]:
+                merged[key] = date
+    return merged
+
+
+def apply_history(findings, history, now=None):
+    """Override first_observed with earlier historical date when available.
+
+    Mutates findings in place; recomputes age_days and age_bucket when a date
+    is replaced. Returns the count of findings updated.
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    updated = 0
+    for f in findings:
+        key = (f["repo"], f["title"])
+        hist_date = history.get(key)
+        if hist_date is not None and hist_date < f["first_observed"]:
+            f["first_observed"] = hist_date
+            f["age_days"] = (now - hist_date).days
+            f["age_bucket"] = age_bucket(f["age_days"])
+            updated += 1
+    return updated
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate an Excel report from AWS Inspector v2 ECR findings."
