@@ -12,6 +12,8 @@ Generate Excel workbooks summarizing ECR container image vulnerability findings 
 - AWS Inspector v2 findings for ECR container images.
 - Filtering by severity, ECR repository, finding status, AWS region.
 - Preservation of historical first-discovered dates across runs via past `-latest.xlsx` reports.
+- Suppression of specific CVEs from summaries while still recording them on a dedicated `Ignored Findings` sheet.
+- Visibility of repositories whose latest image is clean (zero-row in the latest-image report).
 
 **Out of scope**
 - Inspector findings for non-ECR targets (EC2, Lambda).
@@ -27,6 +29,7 @@ Generate Excel workbooks summarizing ECR container image vulnerability findings 
 | API call | Purpose |
 |---|---|
 | `inspector2:ListFindings` | Fetch vulnerability findings |
+| `ecr:DescribeRepositories` | Enumerate all ECR repositories so clean repos surface as 0-rows in the latest-image report |
 | `ecr:DescribeImages` | Resolve latest image per repo (for latest-image filtering and cleanup report) |
 | `sts:GetCallerIdentity` | Resolve AWS account ID for the default output filename and history lookup |
 
@@ -40,6 +43,8 @@ Generate Excel workbooks summarizing ECR container image vulnerability findings 
 | `--status STATUS` | repeatable | `ACTIVE` | Filter by finding status: `ACTIVE`, `SUPPRESSED`, `CLOSED` |
 | `--region REGION` | string | `$AWS_DEFAULT_REGION` | AWS region |
 | `--history-days DAYS` | int | `60` | Lookback window for inheriting first-discovered dates from past `-latest.xlsx` reports. `0` disables. |
+| `--ignore-cve CVE_ID` | repeatable | (none) | CVE ID to suppress from summaries; still recorded on the `Ignored Findings` sheet |
+| `--ignore-file PATH` | string | (none) | Path to a file with one CVE per line; lines starting with `#` are comments; trailing `# reason` is captured per CVE |
 | `--skip-latest` | bool | false | Skip generating the latest-image report |
 | `--skip-cleanup` | bool | false | Skip generating the ECR cleanup report |
 
@@ -53,6 +58,7 @@ All findings matching the filters.
 - `Severity Summary` — counts by severity × age bucket, with Total columns
 - `Repository Summary` — counts by repository × severity, with Total columns and a `Total` row
 - One sheet per repository named after the repo (truncated to 31 chars; see [Sheet name collisions](#sheet-name-collisions))
+- `Ignored Findings` — present only when at least one finding matches the ignore list (see [CVE ignore list](#cve-ignore-list))
 
 **Per-repository sheet columns**
 1. S/N — sequential row number
@@ -62,6 +68,15 @@ All findings matching the filters.
 5. First Discovered — date string `YYYY-MM-DD`
 6. Vulnerability ID — CVE ID (e.g., `CVE-2024-1234`) or empty string
 
+**Ignored Findings sheet columns**
+1. S/N — sequential row number
+2. Repository — ECR repository name
+3. Title — Inspector-provided finding title
+4. Severity
+5. First Discovered — date string `YYYY-MM-DD` (after history preservation, if applicable)
+6. Vulnerability ID — CVE ID
+7. Ignore Reason — free-form text from the ignore-file `# reason` annotation, or empty
+
 ### 2. Latest-image report — `{main}-latest.xlsx`
 
 Same structure as the main report, but scoped to findings whose image is the latest-pushed image per repository.
@@ -69,12 +84,14 @@ Same structure as the main report, but scoped to findings whose image is the lat
 **Latest-image filtering rules**
 - For each repository, the latest image is determined by `imagePushedAt` (DESC) from `ecr:DescribeImages`.
 - A finding is included if, and only if, its image digest equals the latest image's digest.
-- If the latest image in ECR has no Inspector findings at all (e.g., not yet scanned), the repository is excluded entirely from the latest-image report, even if older images have findings. Rationale: avoids reporting against superseded images.
+- If the latest image in ECR has no Inspector findings (e.g., it was patched and is now clean, or has not yet been scanned), the repository still appears in the `Repository Summary` sheet with a 0 count for every severity. The repository's per-finding sheet is omitted (nothing to list).
+- Repository discovery uses `ecr:DescribeRepositories` to surface even repos that have never had findings; the repo set is the union of `DescribeRepositories` and repositories observed in current Inspector findings (so a `DescribeRepositories` denial degrades to the prior "findings-derived" view rather than crashing).
+- When `--repo` is passed, the explicit list overrides repository discovery — `DescribeRepositories` is not called.
 
 **First-discovered preservation**
 - If `--history-days > 0`, the output directory is scanned for past reports matching the pattern `{account_id}-inspector-report-{YYMMDD}-{HHmm}-latest.xlsx`.
 - Only files within the lookback window (default 60 days) whose account ID matches the current run are considered.
-- For each past report, per-repo sheets are read and entries keyed on `(repository, title)` are collected. Repository names come from the `Repository Summary` sheet (not sheet names, which may be truncated).
+- For each past report, per-repo sheets are read and entries keyed on `(repository, title)` are collected. Repository names come from the `Repository Summary` sheet (not sheet names, which may be truncated). The `Ignored Findings` sheet is also scanned, so an ignore → un-ignore cycle preserves the original first-discovered date.
 - Merge rule: across all past reports, the **earliest** recorded first-discovered date wins per `(repository, title)` key.
 - For each current finding, if a history entry exists with a date earlier than the finding's `firstObservedAt`, the finding's first-discovered date, age in days, and age bucket are recomputed from the historical date.
 - The current finding's first-discovered date is never moved forward; only backward.
@@ -110,6 +127,19 @@ Days between run time and `firstObservedAt` (or historical date, if preserved):
 - `60-90 days`
 - `> 90 days`
 
+### CVE ignore list
+
+When `--ignore-cve` and/or `--ignore-file` are supplied, every normalized finding whose `Vulnerability ID` matches an entry in the merged ignore set is removed from all summary calculations (severity summary, repository summary, per-repo sheets) and instead written to a single flat `Ignored Findings` sheet.
+
+**Rules**
+- Comparison is case-insensitive (Inspector returns uppercase; users may type lowercase).
+- A finding without a `Vulnerability ID` (e.g., a generic "Untriaged" entry) is never matched, even if the ignore list contains an empty string.
+- The ignore step runs **after** historical first-discovered preservation, so the `First Discovered` column on the `Ignored Findings` sheet reflects the corrected (oldest known) date, not the live `firstObservedAt`.
+- The ignore step runs **before** repository summary construction, so a repo whose only findings are all ignored will appear with 0 counts (consistent with how truly clean repos are surfaced).
+- The ignore set applies identically to both the main report and the latest-image report.
+- Ignore-file format: blank lines and lines starting with `#` are skipped; on a CVE line, anything after `#` is captured as a free-form ignore reason.
+- Inline `--ignore-cve` entries that duplicate file entries do not override the file's reason (file entries take precedence).
+
 ### Sheet name collisions
 
 Excel sheet names are limited to 31 characters. Per-repo sheets use the repository name truncated to 31 chars. On collision, a `_2`, `_3`, etc. suffix is appended, with the base further truncated to keep total length ≤ 31.
@@ -121,7 +151,9 @@ The write order and collision-resolution algorithm must remain synchronized betw
 | Condition | Behavior |
 |---|---|
 | `sts:GetCallerIdentity` fails | Account ID resolves to `"unknown"`; run continues |
+| `ecr:DescribeRepositories` fails | Repository set falls back to repos derived from current findings; clean repos may be invisible but the run continues |
 | `ecr:DescribeImages` fails for a specific repo | That repo's cleanup data is empty; other repos unaffected |
+| `--ignore-file` path does not exist or is unreadable | Underlying `OSError` propagates and aborts the run before any report is written |
 | Past history xlsx file is corrupt or locked | File is skipped with a printed warning; run continues |
 | Past history xlsx has no `Repository Summary` sheet | File is skipped; run continues |
 | AWS credentials missing/invalid | boto3 raises; run aborts with traceback before any report is written |

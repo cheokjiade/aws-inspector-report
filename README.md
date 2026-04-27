@@ -53,6 +53,7 @@ python -m ensurepip --upgrade
 You need an AWS IAM identity with permissions for:
 
 - `inspector2:ListFindings` — fetch vulnerability findings
+- `ecr:DescribeRepositories` — enumerate repositories so clean repos appear as 0-rows in the latest-image report
 - `ecr:DescribeImages` — query ECR image metadata (used for latest-image filtering and the cleanup report)
 - `sts:GetCallerIdentity` — resolve the AWS account ID for the default output filename
 
@@ -99,6 +100,8 @@ python report.py
 | `--status STATUS` | Finding status filter (repeatable): ACTIVE, SUPPRESSED, CLOSED | `ACTIVE` |
 | `--region REGION` | AWS region | `AWS_DEFAULT_REGION` env var |
 | `--history-days DAYS` | Look back N days of past `-latest.xlsx` reports to preserve first-discovered dates (0 to disable) | `60` |
+| `--ignore-cve CVE_ID` | Ignore a CVE in the summaries; still listed on the **Ignored Findings** sheet (repeatable) | none |
+| `--ignore-file PATH` | Path to a file with one CVE per line (`# reason` allowed for trailing notes) | none |
 | `--skip-latest` | Skip generating the latest-image-only report | |
 | `--skip-cleanup` | Skip generating the ECR image cleanup report | |
 
@@ -125,6 +128,23 @@ python report.py --history-days 0
 
 # Look back 90 days for past reports instead of the 60-day default
 python report.py --history-days 90
+
+# Ignore one or more CVEs (still appear on the Ignored Findings sheet)
+python report.py --ignore-cve CVE-2024-1234 --ignore-cve CVE-2024-5678
+
+# Ignore CVEs listed in a file
+python report.py --ignore-file ignored-cves.txt
+```
+
+**Ignore-file format** — one CVE per line; lines starting with `#` are comments; anything after `#` on a CVE line is captured as the ignore reason and shown on the Ignored Findings sheet:
+
+```
+# Accepted risks - reviewed 2026-04
+CVE-2024-1234  # mitigated by WAF rule, see SEC-501
+CVE-2024-5678  # false positive on alpine-3.18
+
+# Pending vendor patch
+CVE-2024-9999
 ```
 
 ## Output
@@ -136,12 +156,13 @@ A single run produces up to three Excel workbooks:
 - **Severity Summary** — vulnerability counts by severity level and age bracket (< 30 days, 30-60, 60-90, > 90 days)
 - **Repository Summary** — vulnerability counts by ECR repository and severity level
 - **Per-repo sheets** — detailed findings for each repository. Columns: S/N, Title, Remediation, Severity, First Discovered, Vulnerability ID
+- **Ignored Findings** *(only when `--ignore-cve` or `--ignore-file` matches at least one finding)* — flat list of every finding suppressed by the ignore list. Columns: S/N, Repository, Title, Severity, First Discovered, Vulnerability ID, Ignore Reason
 
 ### 2. Latest-image report (`*-inspector-report-*-latest.xlsx`)
 
-Same structure as the main report, but filtered to only include findings from the latest (most recently pushed) image per repository. If the latest image in ECR has no Inspector findings, that repository is excluded entirely.
+Same structure as the main report, but filtered to only include findings from the latest (most recently pushed) image per repository. Repositories whose latest image has no Inspector findings still appear as a 0-row in the **Repository Summary** sheet (so patched repos remain visible rather than silently disappearing). Repository discovery uses `ecr:DescribeRepositories` so even repos that have never had findings are listed.
 
-**First-discovered preservation:** AWS Inspector resets `firstObservedAt` when a new image digest replaces the previous latest image — even if the underlying CVE is unchanged. To preserve the true first-observed date, this tool scans the output directory for past `-latest.xlsx` reports (by default within the last 60 days, matching the current AWS account). When a finding's `(repository, title)` matches an entry in a past report, the earliest historical date is used instead. Disable with `--history-days 0`. Reports generated with a custom `--output` name that doesn't match the default pattern are not picked up as history.
+**First-discovered preservation:** AWS Inspector resets `firstObservedAt` when a new image digest replaces the previous latest image — even if the underlying CVE is unchanged. To preserve the true first-observed date, this tool scans the output directory for past `-latest.xlsx` reports (by default within the last 60 days, matching the current AWS account). When a finding's `(repository, title)` matches an entry in a past report (in either a per-repo sheet or the **Ignored Findings** sheet), the earliest historical date is used instead. Disable with `--history-days 0`. Reports generated with a custom `--output` name that doesn't match the default pattern are not picked up as history.
 
 Skip with `--skip-latest`.
 

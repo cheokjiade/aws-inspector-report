@@ -1,6 +1,11 @@
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
-from report import filter_latest_image_findings, fetch_ecr_images, latest_digests_from_images
+from report import (
+    filter_latest_image_findings,
+    fetch_ecr_images,
+    fetch_all_ecr_repos,
+    latest_digests_from_images,
+)
 
 
 def _make_finding(repo, image_hash, pushed_at, severity="HIGH"):
@@ -152,6 +157,31 @@ def test_fetch_ecr_images(mock_boto3):
     assert result["my-repo"][1]["tags"] == ["v2.0", "latest"]
     assert result["my-repo"][1]["last_pulled"] is None
     mock_boto3.client.assert_called_once_with("ecr", region_name="us-east-1")
+
+
+@patch("report.boto3")
+def test_fetch_all_ecr_repos(mock_boto3):
+    mock_ecr = MagicMock()
+    mock_boto3.client.return_value = mock_ecr
+    mock_paginator = MagicMock()
+    mock_ecr.get_paginator.return_value = mock_paginator
+    mock_paginator.paginate.return_value = [
+        {"repositories": [{"repositoryName": "app-a"}, {"repositoryName": "app-b"}]},
+        {"repositories": [{"repositoryName": "app-c"}]},
+    ]
+    result = fetch_all_ecr_repos(region="us-east-1")
+    assert result == {"app-a", "app-b", "app-c"}
+    mock_boto3.client.assert_called_once_with("ecr", region_name="us-east-1")
+
+
+@patch("report.boto3")
+def test_fetch_all_ecr_repos_handles_error(mock_boto3):
+    mock_ecr = MagicMock()
+    mock_boto3.client.return_value = mock_ecr
+    mock_paginator = MagicMock()
+    mock_ecr.get_paginator.return_value = mock_paginator
+    mock_paginator.paginate.side_effect = Exception("AccessDenied")
+    assert fetch_all_ecr_repos() == set()
 
 
 @patch("report.boto3")

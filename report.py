@@ -143,6 +143,26 @@ def read_history_from_report(path):
                 key = (repo, str(title))
                 if key not in result or parsed_date < result[key]:
                     result[key] = parsed_date
+
+        if "Ignored Findings" in wb.sheetnames:
+            ws = wb["Ignored Findings"]
+            ig_headers = {ws.cell(1, c).value: c for c in range(1, ws.max_column + 1)}
+            repo_col = ig_headers.get("Repository")
+            title_col = ig_headers.get("Title")
+            date_col = ig_headers.get("First Discovered")
+            if repo_col and title_col and date_col:
+                for row in range(2, ws.max_row + 1):
+                    repo = ws.cell(row, repo_col).value
+                    title = ws.cell(row, title_col).value
+                    date_raw = ws.cell(row, date_col).value
+                    if not repo or not title or not date_raw:
+                        continue
+                    parsed_date = _parse_history_date(date_raw)
+                    if parsed_date is None:
+                        continue
+                    key = (str(repo), str(title))
+                    if key not in result or parsed_date < result[key]:
+                        result[key] = parsed_date
     finally:
         wb.close()
     return result
@@ -188,6 +208,61 @@ def apply_history(findings, history, now=None):
     return updated
 
 
+def parse_ignore_file(path):
+    """Parse an ignore-list file into {cve_id: reason}.
+
+    Format: one CVE ID per line. Anything after '#' is treated as the reason
+    (or a comment when the line starts with '#'). Blank lines are skipped.
+    """
+    ignore = {}
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "#" in line:
+                cve, reason = line.split("#", 1)
+                cve = cve.strip()
+                reason = reason.strip()
+            else:
+                cve = line
+                reason = ""
+            if cve:
+                ignore[cve] = reason
+    return ignore
+
+
+def build_ignore_map(args):
+    """Combine --ignore-cve and --ignore-file into {cve_id: reason}."""
+    ignore = {}
+    if getattr(args, "ignore_file", None):
+        ignore.update(parse_ignore_file(args.ignore_file))
+    for cve in getattr(args, "ignore_cve", None) or []:
+        ignore.setdefault(cve, "")
+    return ignore
+
+
+def partition_by_ignore(findings, ignore_map):
+    """Split normalized findings into (active, ignored) by CVE membership.
+
+    Comparison is case-insensitive. Ignored findings get an 'ignore_reason' key
+    copied from ignore_map. Returns shallow copies so callers don't mutate.
+    """
+    if not ignore_map:
+        return list(findings), []
+    upper_map = {k.upper(): v for k, v in ignore_map.items()}
+    active, ignored = [], []
+    for f in findings:
+        cve = (f.get("vulnerability_id") or "").upper()
+        if cve and cve in upper_map:
+            entry = dict(f)
+            entry["ignore_reason"] = upper_map[cve]
+            ignored.append(entry)
+        else:
+            active.append(f)
+    return active, ignored
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Generate an Excel report from AWS Inspector v2 ECR findings."
@@ -230,6 +305,14 @@ def parse_args(argv=None):
         help="Look back N days of past -latest.xlsx reports to preserve first-discovered dates. "
              "Set to 0 to disable. Only applies to the latest-image report. Default: 60"
     )
+    parser.add_argument(
+        "--ignore-cve", action="append", default=[], metavar="CVE_ID",
+        help="Ignore a CVE ID in summaries; still listed on the 'Ignored Findings' sheet (repeatable)"
+    )
+    parser.add_argument(
+        "--ignore-file", default=None, metavar="PATH",
+        help="Path to a file with CVE IDs to ignore (one per line; '# reason' allowed for trailing notes)"
+    )
     args = parser.parse_args(argv)
     if args.status is None:
         args.status = ["ACTIVE"]
@@ -255,6 +338,29 @@ def _get_image_details(finding):
         if details.get("repositoryName"):
             return details
     return {}
+
+
+def fetch_all_ecr_repos(region=None):
+    """Return the set of all ECR repository names in the account/region.
+
+    Returns an empty set on error so the caller can fall back to repos derived
+    from findings (fail-open, matching fetch_ecr_images).
+    """
+    kwargs = {}
+    if region:
+        kwargs["region_name"] = region
+    try:
+        ecr = boto3.client("ecr", **kwargs)
+        paginator = ecr.get_paginator("describe_repositories")
+        names = set()
+        for page in paginator.paginate():
+            for repo in page.get("repositories", []):
+                name = repo.get("repositoryName")
+                if name:
+                    names.add(name)
+        return names
+    except Exception:
+        return set()
 
 
 def fetch_ecr_images(repo_names, region=None):
@@ -483,9 +589,17 @@ def build_severity_summary(findings: list) -> dict:
     return summary
 
 
-def build_repo_summary(findings: list) -> dict:
-    """Build per-repository severity counts."""
+def build_repo_summary(findings: list, repos=None) -> dict:
+    """Build per-repository severity counts.
+
+    When repos is provided, every repo in it is pre-seeded with zero counts so
+    repos with no findings still appear as 0-rows in the Repository Summary.
+    """
     summary = {}
+    if repos:
+        for repo in repos:
+            summary[repo] = {sev: 0 for sev in SEVERITY_ORDER}
+            summary[repo]["total"] = 0
     for f in findings:
         repo = f["repo"]
         if repo not in summary:
@@ -519,6 +633,7 @@ def write_report(
     severity_summary: dict,
     repo_summary: dict,
     repo_findings: dict,
+    ignored_findings: list = None,
 ):
     """Write all report data to an Excel workbook."""
     wb = openpyxl.Workbook()
@@ -603,6 +718,25 @@ def write_report(
             ])
         ws.freeze_panes = "A2"
 
+    if ignored_findings:
+        ws = wb.create_sheet("Ignored Findings")
+        ig_headers = ["S/N", "Repository", "Title", "Severity",
+                      "First Discovered", "Vulnerability ID", "Ignore Reason"]
+        ws.append(ig_headers)
+        for col in range(1, len(ig_headers) + 1):
+            _bold(ws, 1, col)
+        for i, f in enumerate(ignored_findings, start=1):
+            ws.append([
+                i,
+                f["repo"],
+                f["title"],
+                f["severity"].capitalize(),
+                f["first_observed"].strftime("%Y-%m-%d"),
+                f.get("vulnerability_id", ""),
+                f.get("ignore_reason", ""),
+            ])
+        ws.freeze_panes = "A2"
+
     wb.save(output_path)
 
 
@@ -674,14 +808,20 @@ def main():
     raw_findings = fetch_findings(args)
     print(f"Retrieved {len(raw_findings)} findings.")
 
+    ignore_map = build_ignore_map(args)
+    if ignore_map:
+        print(f"Ignore list: {len(ignore_map)} CVE ID(s) will be moved to 'Ignored Findings' sheet.")
+
     findings = normalize_findings(raw_findings)
+    findings, ignored = partition_by_ignore(findings, ignore_map)
 
     severity_summary = build_severity_summary(findings)
     repo_summary = build_repo_summary(findings)
     repo_findings = build_repo_findings(findings)
 
-    write_report(args.output, severity_summary, repo_summary, repo_findings)
-    print(f"Report written to: {args.output}")
+    write_report(args.output, severity_summary, repo_summary, repo_findings,
+                 ignored_findings=ignored)
+    print(f"Report written to: {args.output} ({len(findings)} active, {len(ignored)} ignored)")
 
     need_ecr = not args.skip_latest or not args.skip_cleanup
     ecr_images = {}
@@ -693,8 +833,12 @@ def main():
             repo = details.get("repositoryName")
             if repo:
                 repos_in_findings.add(repo)
-        print("Querying ECR for image details...")
-        ecr_images = fetch_ecr_images(repos_in_findings, args.region)
+        if args.repo:
+            repo_set = set(args.repo)
+        else:
+            repo_set = fetch_all_ecr_repos(args.region) | repos_in_findings
+        print(f"Querying ECR for image details across {len(repo_set)} repos...")
+        ecr_images = fetch_ecr_images(repo_set, args.region)
         ecr_latest = latest_digests_from_images(ecr_images)
 
     if not args.skip_latest:
@@ -709,12 +853,16 @@ def main():
                 matched = apply_history(latest_findings, history)
                 print(f"Applied {matched} first-discovered dates from {len(history)} historical entries.")
 
+        latest_findings, latest_ignored = partition_by_ignore(latest_findings, ignore_map)
+
         latest_severity = build_severity_summary(latest_findings)
-        latest_repo = build_repo_summary(latest_findings)
+        latest_repo = build_repo_summary(latest_findings, repos=ecr_latest.keys())
         latest_repo_findings = build_repo_findings(latest_findings)
         latest_output = args.output.replace(".xlsx", "-latest.xlsx")
-        write_report(latest_output, latest_severity, latest_repo, latest_repo_findings)
-        print(f"Latest-image report written to: {latest_output}")
+        write_report(latest_output, latest_severity, latest_repo, latest_repo_findings,
+                     ignored_findings=latest_ignored)
+        print(f"Latest-image report written to: {latest_output} "
+              f"({len(latest_findings)} active, {len(latest_ignored)} ignored)")
 
     if not args.skip_cleanup:
         cleanup_output = args.output.replace(".xlsx", "-ecr-cleanup.xlsx")

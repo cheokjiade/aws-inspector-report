@@ -61,6 +61,17 @@ def test_repo_summary_zeros_missing():
     assert summary["app-a"]["MEDIUM"] == 0
 
 
+def test_repo_summary_preseeds_clean_repos():
+    """Repos passed via 'repos' appear with zero counts even when they have no findings."""
+    findings = [make_normalized("HIGH", repo="app-a")]
+    summary = build_repo_summary(findings, repos=["app-a", "app-b", "app-c"])
+    assert summary["app-a"]["HIGH"] == 1
+    assert summary["app-a"]["total"] == 1
+    assert summary["app-b"]["total"] == 0
+    assert summary["app-b"]["CRITICAL"] == 0
+    assert summary["app-c"]["total"] == 0
+
+
 # --- build_repo_findings ---
 
 def test_repo_findings_sorted_by_severity_then_date():
